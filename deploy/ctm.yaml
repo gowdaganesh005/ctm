@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ctm-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctm-recorder
+  namespace: ctm-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ctm-recorder-role
+rules:
+  # Core workloads & telemetry
+  - apiGroups: [""]
+    resources:
+      - pods
+      - configmaps
+      - secrets
+      - services
+      - nodes
+      - persistentvolumeclaims
+      - events
+    verbs: ["get", "list", "watch"]
+  # Workloads
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+  # Networking
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  # Autoscaling
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ctm-recorder-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ctm-recorder-role
+subjects:
+  - kind: ServiceAccount
+    name: ctm-recorder
+    namespace: ctm-system
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ctm-data
+  namespace: ctm-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ctm
+  namespace: ctm-system
+  labels:
+    app: ctm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ctm
+  template:
+    metadata:
+      labels:
+        app: ctm
+    spec:
+      serviceAccountName: ctm-recorder
+      containers:
+        - name: ctm
+          image: ctm:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: ctm-storage
+              mountPath: /data
+      volumes:
+        - name: ctm-storage
+          persistentVolumeClaim:
+            claimName: ctm-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ctm-service
+  namespace: ctm-system
+  labels:
+    app: ctm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app: ctm
